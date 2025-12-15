@@ -3,8 +3,6 @@
   <h1>Nixy</h1>
 </div>
 
-## Key Features
-
 All configuration lives in `nodes.*`. One node is one machine:
 ```nix
 nodes.server = {
