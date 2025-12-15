@@ -1,8 +1,6 @@
 <div align="center">
-  <a href="#">
-    <img src="https://raw.githubusercontent.com/anialic/nixy/main/.github/logo.svg" width="50" alt="nixy logo">
-    <h1>Nixy</h1>
-  </a>
+  <img src="https://raw.githubusercontent.com/anialic/nixy/main/.github/logo.svg" width="75" alt="nixy logo">
+  <h1>Nixy</h1>
 </div>
 
 ## Key Features
