@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68.00 59.43" width="68" height="59">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 156.00 59.43" width="156" height="59">
   <line x1="34.00" y1="29.71" x2="66.00" y2="29.71" stroke="#5277C3" stroke-width="2" stroke-linecap="round"/>
   <line x1="46.22" y1="29.71" x2="57.41" y2="18.53" stroke="#5277C3" stroke-width="2" stroke-linecap="round"/>
   <line x1="46.22" y1="29.71" x2="57.41" y2="40.90" stroke="#5277C3" stroke-width="2" stroke-linecap="round"/>
@@ -18,4 +18,5 @@
   <line x1="34.00" y1="29.71" x2="50.00" y2="2.00" stroke="#7EBAE4" stroke-width="2" stroke-linecap="round"/>
   <line x1="40.11" y1="19.13" x2="36.02" y2="3.84" stroke="#7EBAE4" stroke-width="2" stroke-linecap="round"/>
   <line x1="40.11" y1="19.13" x2="55.39" y2="15.03" stroke="#7EBAE4" stroke-width="2" stroke-linecap="round"/>
+  <text x="76.00" y="29.71" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="#5277C3" dominant-baseline="middle">Nixy</text>
 </svg>
