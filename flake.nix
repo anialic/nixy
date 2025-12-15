@@ -19,13 +19,13 @@
         };
         deploy-rs = {
           description = ''
-           Use deploy-rs.
+            Use deploy-rs.
           '';
           path = ./templates/deploy-rs;
         };
         without-flakes = {
           description = ''
-           Traditional configuration. You need `nix-build -A nixosConfigurations.<hostname>.config.system.build.toplevel` and `sudo bash ./result/bin/switch-to-configuration switch` for it to take effect.
+            Traditional configuration. You need `nix-build -A nixosConfigurations.<hostname>.config.system.build.toplevel` and `sudo bash ./result/bin/switch-to-configuration switch` for it to take effect.
           '';
           path = ./templates/without-flakes;
         };
