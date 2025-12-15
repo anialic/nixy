@@ -1,4 +1,11 @@
-## Why nixy?
+<div align="center">
+  <a href="#">
+    <img src="https://raw.githubusercontent.com/anialic/nixy/main/.github/logo.svg" width="200" alt="nixy logo">
+    <h1>Nixy</h1>
+  </a>
+</div>
+
+## Key Features
 
 All configuration lives in `nodes.*`. One node is one machine:
 ```nix
