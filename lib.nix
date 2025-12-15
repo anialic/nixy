@@ -1,5 +1,6 @@
 { lib }:
 rec {
+  # Base option builder
   mkOpt =
     type: default:
     if default == null then
@@ -10,6 +11,7 @@ rec {
     else
       lib.mkOption { inherit type default; };
 
+  # Expanded helpers
   helpers = {
     mkStr = mkOpt lib.types.str;
     mkBool = mkOpt lib.types.bool;
@@ -18,7 +20,64 @@ rec {
     mkPath = mkOpt lib.types.path;
     mkLines = mkOpt lib.types.lines;
     mkAttrs = mkOpt lib.types.attrs;
+
     mkList = elemType: mkOpt (lib.types.listOf elemType);
+    mkListOf =
+      type:
+      lib.mkOption {
+        type = lib.types.listOf type;
+        default = [ ];
+      };
+    mkAttrsOf =
+      type:
+      lib.mkOption {
+        type = lib.types.attrsOf type;
+        default = { };
+      };
+    mkStrList = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+    };
+
+    mkEnum = values: mkOpt (lib.types.enum values);
+    mkEither = t1: t2: mkOpt (lib.types.either t1 t2);
+    mkOneOf = types: mkOpt (lib.types.oneOf types);
+
+    mkPackage = lib.mkOption { type = lib.types.package; };
+    mkPackageOr =
+      default:
+      lib.mkOption {
+        type = lib.types.package;
+        inherit default;
+      };
+    mkRaw = lib.mkOption { type = lib.types.raw; };
+    mkRawOr =
+      default:
+      lib.mkOption {
+        type = lib.types.raw;
+        inherit default;
+      };
+    mkNullable =
+      type:
+      lib.mkOption {
+        type = lib.types.nullOr type;
+        default = null;
+      };
+
+    mkSub =
+      opts:
+      lib.mkOption {
+        type = lib.types.submodule { options = opts; };
+        default = { };
+      };
+    mkSubList =
+      opts:
+      lib.mkOption {
+        type = lib.types.listOf (lib.types.submodule { options = opts; });
+        default = [ ];
+      };
+
+    mkEnable = lib.mkEnableOption;
   };
 
   defaultExclude =
@@ -294,6 +353,7 @@ rec {
           nixpkgs.legacyPackages.${system}.nixfmt-rfc-style
       );
 
+      # Collect option paths from a module's options
       collectPaths =
         prefix: opts:
         lib.concatLists (
@@ -308,6 +368,7 @@ rec {
                   inherit path;
                   type = opt.type.description or opt.type.name or "?";
                   default = opt.default or null;
+                  hasDefault = opt ? default;
                 }
               ]
             else if builtins.isAttrs opt then
@@ -317,28 +378,156 @@ rec {
           ) opts
         );
 
-      optionsDoc = lib.concatMapStringsSep "\n\n" (
-        m:
+      optionsDoc =
         let
-          paths = collectPaths "" m.options;
-          targetStr = if m.target != null then " [${m.target}]" else "";
-          requiresStr =
-            if m.requires != [ ] then " (requires: ${lib.concatStringsSep ", " m.requires})" else "";
-          optsStr =
-            if paths == [ ] then
-              "  (no options)"
-            else
-              lib.concatMapStringsSep "\n" (
-                p:
-                let
-                  defStr = if p.default != null then " = ${builtins.toJSON p.default}" else "";
-                in
-                "  ${p.path}: ${p.type}${defStr}"
-              ) paths;
-        in
-        "## ${m.name}${targetStr}${requiresStr}\n${optsStr}"
-      ) moduleEntries;
+          moduleCount = builtins.length moduleEntries;
+          totalOptions = lib.foldl' (
+            acc: m: acc + builtins.length (collectPaths "" m.options)
+          ) 0 moduleEntries;
 
+          formatModule =
+            m:
+            let
+              paths = collectPaths "" m.options;
+              optCount = builtins.length paths;
+              targetBadge = if m.target != null then " [${m.target}]" else "";
+              requiresBadge = if m.requires != [ ] then " <- ${lib.concatStringsSep ", " m.requires}" else "";
+              summary = "${m.name}${targetBadge}${requiresBadge} (${toString optCount} options)";
+              body =
+                if paths == [ ] then
+                  "_No options_"
+                else
+                  ''
+                    | Option | Type | Default |
+                    |--------|------|---------|
+                    ${lib.concatMapStringsSep "\n" (
+                      p:
+                      let
+                        defStr = if p.default == null then "-" else "`${builtins.toJSON p.default}`";
+                      in
+                      "| `${p.path}` | ${p.type} | ${defStr} |"
+                    ) paths}'';
+            in
+            ''
+              <details>
+              <summary>${summary}</summary>
+
+              ${body}
+
+              </details>'';
+        in
+        ''
+          # nixy modules
+
+          > ${toString moduleCount} modules, ${toString totalOptions} options
+
+          ${lib.concatMapStringsSep "\n\n" formatModule moduleEntries}
+        '';
+
+      nodesDoc =
+        let
+          nodeCount = builtins.length (builtins.attrNames enrichedNodes);
+          byTarget = lib.groupBy (n: enrichedNodes.${n}.target) (builtins.attrNames enrichedNodes);
+
+          formatNode =
+            name:
+            let
+              e = enrichedNodes.${name};
+              enabledMods = lib.filter (m: (e.raw.${m.name} or { }).enable or false) moduleEntries;
+              modCount = builtins.length enabledMods;
+              summary = "${name} [${e.system}] (${toString modCount} modules)";
+              body =
+                if enabledMods == [ ] then
+                  "_No modules enabled_"
+                else
+                  lib.concatMapStringsSep "\n" (m: "- ${m.name}") enabledMods;
+            in
+            ''
+              <details>
+              <summary>${summary}</summary>
+
+              ${body}
+
+              </details>'';
+
+          formatTarget = target: nodes: ''
+            ### ${target}
+
+            ${lib.concatMapStringsSep "\n\n" formatNode nodes}
+          '';
+        in
+        ''
+          # nixy nodes
+
+          > ${toString nodeCount} nodes
+
+          ${lib.concatStringsSep "\n\n" (lib.mapAttrsToList formatTarget byTarget)}
+        '';
+
+      dependencyGraph =
+        let
+          depLines = lib.concatLists (map (m: map (dep: "  ${dep} --> ${m.name}") m.requires) moduleEntries);
+          moduleDeps = lib.concatStringsSep "\n" depLines;
+
+          # Node -> modules relationships
+          nodeLines = lib.concatLists (
+            map (
+              name:
+              let
+                e = enrichedNodes.${name};
+                enabledMods = lib.filter (m: (e.raw.${m.name} or { }).enable or false) moduleEntries;
+              in
+              map (m: "  ${name}([${name}]) -.-> ${m.name}") enabledMods
+            ) (builtins.attrNames enrichedNodes)
+          );
+          nodeModules = lib.concatStringsSep "\n" nodeLines;
+
+          # Module styling by target
+          moduleStyles = lib.concatMapStringsSep "\n" (
+            m:
+            let
+              style =
+                if m.target == "nixos" then
+                  ":::nixos"
+                else if m.target == "darwin" then
+                  ":::darwin"
+                else if m.target == "home" then
+                  ":::home"
+                else
+                  "";
+            in
+            "  ${m.name}[${m.name}]${style}"
+          ) moduleEntries;
+
+          depsSection =
+            if depLines == [ ] then
+              ""
+            else
+              ''
+
+                  %% Dependencies
+                ${moduleDeps}'';
+        in
+        ''
+          # nixy dependency graph
+
+          ```mermaid
+          flowchart LR
+            %% Modules
+          ${moduleStyles}${depsSection}
+
+            %% Nodes
+          ${nodeModules}
+
+            %% Styles
+            classDef nixos fill:#4c566a,stroke:#88c0d0,color:#eceff4
+            classDef darwin fill:#4c566a,stroke:#a3be8c,color:#eceff4
+            classDef home fill:#4c566a,stroke:#ebcb8b,color:#eceff4
+            classDef default fill:#3b4252,stroke:#81a1c1,color:#eceff4
+          ```
+        '';
+
+      # Options check with clear formatting
       optionsCheck =
         let
           collectMissing =
@@ -357,43 +546,43 @@ rec {
                   [ ]
               ) opts
             );
+
           modulesWithMissing = lib.filter (m: m.missing != [ ]) (
             map (m: {
               inherit (m) name target;
               missing = collectMissing "" m.options;
             }) moduleEntries
           );
+
+          totalMissing = lib.foldl' (acc: m: acc + builtins.length m.missing) 0 modulesWithMissing;
         in
         if modulesWithMissing == [ ] then
-          "✓ All options have default values"
-        else
-          lib.concatMapStringsSep "\n\n" (
-            m:
-            let
-              targetStr = if m.target != null then " [${m.target}]" else "";
-            in
-            "✗ ${m.name}${targetStr}:\n${lib.concatMapStringsSep "\n" (p: "  - ${p}") m.missing}"
-          ) modulesWithMissing;
+          ''
 
-      nodesDoc = lib.concatMapStringsSep "\n\n" (
-        name:
-        let
-          e = enrichedNodes.${name};
-          enabledMods = lib.filter (
-            m:
-            let
-              mc = e.raw.${m.name} or { };
-            in
-            (mc.enable or false) == true
-          ) moduleEntries;
-          modsStr =
-            if enabledMods == [ ] then
-              "  (no modules)"
-            else
-              lib.concatMapStringsSep "\n" (m: "  - ${m.name}") enabledMods;
-        in
-        "## ${name} [${e.target}] (${e.system})\n${modsStr}"
-      ) (builtins.attrNames enrichedNodes);
+            All options have default values.
+          ''
+        else
+          ''
+            # Options Missing Defaults
+
+            > ${toString totalMissing} options without defaults in ${toString (builtins.length modulesWithMissing)} modules
+
+            ${lib.concatMapStringsSep "\n\n" (
+              m:
+              let
+                targetStr = if m.target != null then " [${m.target}]" else "";
+              in
+              ''
+                <details>
+                <summary>${m.name}${targetStr} (${toString (builtins.length m.missing)} missing)</summary>
+
+                ${lib.concatMapStringsSep "\n" (p: "- `${p}`") m.missing}
+
+                </details>''
+            ) modulesWithMissing}
+          '';
+
+      optionsCheckFailed = lib.hasPrefix "# Options Missing" optionsCheck;
 
       mkApp = system: name: script: {
         type = "app";
@@ -403,21 +592,25 @@ rec {
       builtinApps = lib.genAttrs config.systems (system: {
         allOptions = mkApp system "options" ''
           cat <<'EOF'
-          # nixy modules
-
           ${optionsDoc}
-          EOF'';
+          EOF
+        '';
         allNodes = mkApp system "nodes" ''
           cat <<'EOF'
-          # nixy nodes
-
           ${nodesDoc}
-          EOF'';
+          EOF
+        '';
         checkOptions = mkApp system "check" ''
           cat <<'EOF'
           ${optionsCheck}
           EOF
-          ${if lib.hasPrefix "✗" optionsCheck then "exit 1" else ""}'';
+          ${lib.optionalString optionsCheckFailed "exit 1"}
+        '';
+        graph = mkApp system "graph" ''
+          cat <<'EOF'
+          ${dependencyGraph}
+          EOF
+        '';
       });
 
       rulesErrors = map (r: r.message) (builtins.filter (r: r.assertion == false) config.rules);
