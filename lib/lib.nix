@@ -1,6 +1,5 @@
 { lib }:
 rec {
-  # Base option builder
   mkOpt =
     type: default:
     if default == null then
@@ -11,7 +10,6 @@ rec {
     else
       lib.mkOption { inherit type default; };
 
-  # Expanded helpers
   helpers = {
     mkStr = mkOpt lib.types.str;
     mkBool = mkOpt lib.types.bool;
@@ -464,70 +462,6 @@ rec {
           ${lib.concatStringsSep "\n\n" (lib.mapAttrsToList formatTarget byTarget)}
         '';
 
-      dependencyGraph =
-        let
-          depLines = lib.concatLists (map (m: map (dep: "  ${dep} --> ${m.name}") m.requires) moduleEntries);
-          moduleDeps = lib.concatStringsSep "\n" depLines;
-
-          # Node -> modules relationships
-          nodeLines = lib.concatLists (
-            map (
-              name:
-              let
-                e = enrichedNodes.${name};
-                enabledMods = lib.filter (m: (e.raw.${m.name} or { }).enable or false) moduleEntries;
-              in
-              map (m: "  ${name}([${name}]) -.-> ${m.name}") enabledMods
-            ) (builtins.attrNames enrichedNodes)
-          );
-          nodeModules = lib.concatStringsSep "\n" nodeLines;
-
-          # Module styling by target
-          moduleStyles = lib.concatMapStringsSep "\n" (
-            m:
-            let
-              style =
-                if m.target == "nixos" then
-                  ":::nixos"
-                else if m.target == "darwin" then
-                  ":::darwin"
-                else if m.target == "home" then
-                  ":::home"
-                else
-                  "";
-            in
-            "  ${m.name}[${m.name}]${style}"
-          ) moduleEntries;
-
-          depsSection =
-            if depLines == [ ] then
-              ""
-            else
-              ''
-
-                  %% Dependencies
-                ${moduleDeps}'';
-        in
-        ''
-          # nixy dependency graph
-
-          ```mermaid
-          flowchart LR
-            %% Modules
-          ${moduleStyles}${depsSection}
-
-            %% Nodes
-          ${nodeModules}
-
-            %% Styles
-            classDef nixos fill:#4c566a,stroke:#88c0d0,color:#eceff4
-            classDef darwin fill:#4c566a,stroke:#a3be8c,color:#eceff4
-            classDef home fill:#4c566a,stroke:#ebcb8b,color:#eceff4
-            classDef default fill:#3b4252,stroke:#81a1c1,color:#eceff4
-          ```
-        '';
-
-      # Options check with clear formatting
       optionsCheck =
         let
           collectMissing =
@@ -605,11 +539,6 @@ rec {
           ${optionsCheck}
           EOF
           ${lib.optionalString optionsCheckFailed "exit 1"}
-        '';
-        graph = mkApp system "graph" ''
-          cat <<'EOF'
-          ${dependencyGraph}
-          EOF
         '';
       });
 

@@ -1,4 +1,9 @@
-{ lib, config, inputs, ... }:
+{
+  lib,
+  config,
+  inputs,
+  ...
+}:
 let
   deployNodes = lib.filterAttrs (_: n: n.deploy.enable or false) config.nodes;
 in
