@@ -7,9 +7,10 @@
 </div>
 
 <br/>
+
 Nixy is a framework that can help you simplify configuration.
 
-## Key Features
+## Why nixy?
 
 All configuration lives in `nodes.*`. One node is one machine:
 ```nix
