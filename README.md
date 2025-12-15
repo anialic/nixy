@@ -1,6 +1,6 @@
 <div align="center">
   <a href="#">
-    <img src="https://raw.githubusercontent.com/anialic/nixy/main/.github/logo.svg" width="200" alt="nixy logo">
+    <img src="https://raw.githubusercontent.com/anialic/nixy/main/.github/logo.svg" width="50" alt="nixy logo">
     <h1>Nixy</h1>
   </a>
 </div>
