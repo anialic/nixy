@@ -129,4 +129,12 @@ exclude = { name, ... }:
 nix run .#allOptions    # list all modules and options
 nix run .#allNodes      # list all nodes
 nix run .#checkOptions  # verify all options have defaults
+nix run .#graph         # show dependency graph (mermaid)
 ```
+
+## Examples
+
+- [Minimal NixOS](https://gist.github.com/anialic/2ea7a1e2d3926a5704897b60a63a694a)
+- [Multi-host](https://gist.github.com/anialic/0570c49ad19b128c1377da052dc0c4c8)
+- [With deploy-rs](https://gist.github.com/anialic/b8dc7ff63b7ac01932007db3b4baa67b)
+- [Without flakes](https://gist.github.com/anialic/9b244cae11b0fe57a6b01439d4010ffc)
