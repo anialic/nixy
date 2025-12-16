@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v30
+      - name: Check flake
+        run: nix flake check --no-build
+      - name: Check templates
+        run: |
+          for t in minimal multi-platform deploy-rs; do
+            echo "=== Checking $t ==="
+            nix flake check --no-build "path:./templates/$t" --override-input nixy path:.
+          done
