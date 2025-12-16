@@ -1,7 +1,7 @@
 { lib }:
 rec {
   meta = {
-    version = "0.1.0";
+    version = "0.1.1";
     helpers = {
       mkStr = "String option, null default wraps in nullOr";
       mkBool = "Boolean option";
