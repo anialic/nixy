@@ -35,7 +35,7 @@ my-config/
 
   outputs = { nixpkgs, nixy, ... }@inputs: nixy.mkFlake {
     inherit nixpkgs;
-    imports = [ ./. ];
+    imports = [ ./modules ./nodes ];
     args = { inherit inputs; };
   };
 }
