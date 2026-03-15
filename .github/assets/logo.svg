@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 234.00 89.14" width="234" height="89">
+  <line x1="51.00" y1="44.57" x2="99.00" y2="44.57" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="69.33" y1="44.57" x2="86.12" y2="27.79" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="69.33" y1="44.57" x2="86.12" y2="61.35" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="51.00" y1="44.57" x2="75.00" y2="86.14" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="60.17" y1="60.45" x2="83.09" y2="66.59" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="60.17" y1="60.45" x2="54.02" y2="83.37" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="51.00" y1="44.57" x2="27.00" y2="86.14" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="41.83" y1="60.45" x2="47.98" y2="83.37" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="41.83" y1="60.45" x2="18.91" y2="66.59" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="51.00" y1="44.57" x2="3.00" y2="44.57" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="32.67" y1="44.57" x2="15.88" y2="61.35" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="32.67" y1="44.57" x2="15.88" y2="27.79" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="51.00" y1="44.57" x2="27.00" y2="3.00" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="41.83" y1="28.69" x2="18.91" y2="22.55" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="41.83" y1="28.69" x2="47.98" y2="5.77" stroke="#5277C3" stroke-width="3" stroke-linecap="round"/>
+  <line x1="51.00" y1="44.57" x2="75.00" y2="3.00" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="60.17" y1="28.69" x2="54.02" y2="5.77" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="60.17" y1="28.69" x2="83.09" y2="22.55" stroke="#7EBAE4" stroke-width="3" stroke-linecap="round"/>
+  <text x="114.00" y="44.57" font-family="Arial, sans-serif" font-size="54" font-weight="bold" fill="#5277C3" dominant-baseline="middle">Nixy</text>
+</svg>
