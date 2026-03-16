@@ -3,42 +3,49 @@
   imports ? [ ],
   args ? { },
   exclude ? null,
+  disabledModules ? [ ],
 }:
 
 let
   defaultExclude =
     { name, ... }:
-    let c = builtins.substring 0 1 name; in
-    c == "_" || c == "." || name == "flake.nix" || name == "default.nix";
+    lib.hasPrefix "_" name || lib.hasPrefix "." name || name == "flake.nix" || name == "default.nix";
 
-  excludeFn =
-    if exclude == null then defaultExclude
-    else if builtins.isFunction exclude then exclude
+  mkExcludeFn =
+    e:
+    if e == null then defaultExclude
+    else if builtins.isFunction e then e
     else throw "[nixy] 'exclude' must be a function";
 
-  scanDir =
-    dir:
+  mkScanDir =
+    excludeFn: dir:
     lib.concatMap (
       { name, value }:
-      let path = dir + "/${name}"; in
+      let path = lib.path.append dir name; in
       if excludeFn { inherit name path; } then [ ]
-      else if value == "directory" then scanDir path
+      else if value == "directory" then mkScanDir excludeFn path
       else if value == "regular" && lib.hasSuffix ".nix" name then [ path ]
       else [ ]
     ) (lib.attrsToList (builtins.readDir dir));
 
-  resolveImport =
-    x:
-    if builtins.isList x then lib.concatMap resolveImport x
-    else if builtins.isPath x then
-      let s = toString x; in
-      if lib.hasSuffix ".nix" s then
-        if builtins.pathExists x then [ x ]
-        else throw "[nixy] file not found: ${s}"
-      else if builtins.pathExists x then scanDir x
-      else throw "[nixy] path not found: ${s}"
-    else if builtins.isFunction x || builtins.isAttrs x then [ x ]
-    else throw "[nixy] unsupported import type: ${builtins.typeOf x}";
+  mkResolveImport =
+    excludeFn:
+    let
+      scanDir = mkScanDir excludeFn;
+      resolveImport =
+        x:
+        if builtins.isList x then lib.concatMap resolveImport x
+        else if builtins.isPath x then
+          let s = toString x; in
+          if lib.hasSuffix ".nix" s then
+            if builtins.pathExists x then [ x ]
+            else throw "[nixy] file not found: ${s}"
+          else if builtins.pathExists x then scanDir x
+          else throw "[nixy] path not found: ${s}"
+        else if builtins.isFunction x || builtins.isAttrs x then [ x ]
+        else throw "[nixy] unsupported import type: ${builtins.typeOf x}";
+    in
+    resolveImport;
 
   loadModule =
     label: m:
@@ -74,6 +81,16 @@ let
     merge = _: defs: lib.foldl' lib.recursiveUpdate { } (map (d: d.value) defs);
   };
 
+  warnDeepMerge = lib.types.mkOptionType {
+    name = "warnDeepMerge";
+    check = builtins.isAttrs;
+    merge =
+      loc: defs:
+      lib.warn
+        "[nixy] node schema key '${lib.showOption loc}' is not declared in global schema"
+        (lib.foldl' lib.recursiveUpdate { } (map (d: d.value) defs));
+  };
+
   buildNode =
     name: node: traits:
     let
@@ -86,9 +103,11 @@ let
         imports =
           map (
             tName:
-            builtins.addErrorContext "loading trait '${tName}'" (
-              loadModule "trait:${tName}@${name}" traits.${tName}
-            )
+            builtins.addErrorContext "loading trait '${tName}'" {
+              _file = "trait:${tName}@${name}";
+              key = "nixy/trait:${tName}";
+              imports = [ traits.${tName} ];
+            }
           ) node.traits
           ++ lib.imap0 (
             i: m:
@@ -105,51 +124,93 @@ let
       _file = "<nixy/core>";
       options = {
         schema = lib.mkOption { type = deepMerge; default = { }; };
-        traits = lib.mkOption { type = lib.types.attrsOf lib.types.raw; default = { }; };
-        nodes = lib.mkOption {
-          type = lib.types.lazyAttrsOf (lib.types.submodule {
-            options = {
-              traits = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
-              schema = lib.mkOption {
-                type = lib.types.submodule { options = toOptions [ ] config.schema; };
-                default = { };
-              };
-              includes = lib.mkOption { type = lib.types.listOf lib.types.raw; default = [ ]; };
-            };
-          });
+        traits = lib.mkOption {
+          type = lib.types.attrsWith {
+            elemType = lib.types.deferredModule;
+            placeholder = "traitName";
+          };
           default = { };
+        };
+        nodes = lib.mkOption {
+          type = lib.types.attrsWith {
+            elemType = lib.types.submodule {
+              options = {
+                traits = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
+                schema = lib.mkOption {
+                  type = lib.types.submodule {
+                    freeformType = warnDeepMerge;
+                    options = toOptions [ ] config.schema;
+                  };
+                  default = { };
+                };
+                includes = lib.mkOption { type = lib.types.listOf lib.types.raw; default = [ ]; };
+              };
+            };
+            lazy = true;
+            placeholder = "nodeName";
+          };
+          default = { };
+          apply = nodes:
+            lib.mapAttrs (
+              name: node:
+              builtins.addErrorContext "building node '${name}'" (
+                buildNode name node config.traits
+              )
+            ) nodes;
         };
         output = lib.mkOption { type = deepMerge; default = { }; };
       };
     };
 
-  evaluated = lib.evalModules {
-    class = "nixy";
-    modules =
-      map (loadModule "<inline>") (lib.concatMap resolveImport (lib.toList imports))
-      ++ [ mkCore ];
-    specialArgs = args;
-  };
+  mkDisableModule =
+    disabled:
+    lib.optional (disabled != [ ]) {
+      _file = "<nixy/disabledModules>";
+      disabledModules = disabled;
+    };
 
-  cfg = evaluated.config;
+  mkEval =
+    resolveImport: importList: specialArgs: disabled:
+    lib.evalModules {
+      class = "nixy";
+      modules =
+        map (loadModule "<inline>") (lib.concatMap resolveImport (lib.toList importList))
+        ++ [ mkCore ]
+        ++ mkDisableModule disabled;
+      inherit specialArgs;
+    };
+
+  buildResult =
+    ev: currentArgs: currentExcludeFn: currentDisabled:
+    {
+      nodes   = ev.config.nodes;
+      output  = ev.config.output;
+      schema  = ev.config.schema;
+      traits  = ev.config.traits;
+      options = ev.options;
+
+      extend =
+        extra:
+        let
+          extraArgs    = extra.args or { };
+          newArgs      = lib.recursiveUpdate currentArgs extraArgs;
+          newExcludeFn = if extra ? exclude then mkExcludeFn extra.exclude else currentExcludeFn;
+          newDisabled  = currentDisabled ++ (extra.disabledModules or [ ]);
+          newResolve   = mkResolveImport newExcludeFn;
+          newModules   = lib.concatMap newResolve (lib.toList (extra.imports or [ ]));
+        in
+        buildResult
+          (ev.extendModules {
+            modules = newModules ++ mkDisableModule (extra.disabledModules or [ ]);
+            specialArgs = extraArgs;
+          })
+          newArgs
+          newExcludeFn
+          newDisabled;
+    };
+
+  excludeFn     = mkExcludeFn exclude;
+  resolveImport = mkResolveImport excludeFn;
 
 in
-{
-  nodes = lib.mapAttrs (
-    name: node:
-    builtins.addErrorContext "building node '${name}'" (
-      buildNode name node cfg.traits
-    )
-  ) cfg.nodes;
-
-  output = cfg.output;
-
-  extend =
-    extra:
-    import ./eval.nix {
-      inherit lib;
-      imports = lib.toList imports ++ lib.toList (extra.imports or [ ]);
-      args = args // (extra.args or { });
-      exclude = if extra ? exclude then extra.exclude else exclude;
-    };
-}
+buildResult (mkEval resolveImport imports args disabledModules) args excludeFn disabledModules

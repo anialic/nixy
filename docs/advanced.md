@@ -179,7 +179,7 @@ in
 
 ## Composition with extend
 
-`extend` re-evaluates with additional imports. `lib` is inherited; new `args` merge with `//`.
+`extend` adds imports incrementally using `extendModules`. `lib` is inherited; new `args` are deep-merged with `lib.recursiveUpdate`.
 
 ### Library + consumer
 
@@ -229,3 +229,24 @@ cluster.extend {
   exclude = { name, ... }: lib.hasSuffix ".test.nix" name;
 }
 ```
+
+### Disabling modules
+
+Disable a trait from a base library:
+
+```nix
+cluster.extend {
+  imports = [ ./override-ssh.nix ];
+  disabledModules = [ { key = "nixy/trait:ssh"; } ];
+}
+```
+
+Disable a file-based module:
+
+```nix
+cluster.extend {
+  disabledModules = [ ./modules/legacy.nix ];
+}
+```
+
+`disabledModules` accumulate across `extend` calls — each call appends to the list from the previous evaluation.
