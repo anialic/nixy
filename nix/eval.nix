@@ -3,7 +3,6 @@
   imports ? [ ],
   args ? { },
   exclude ? null,
-  disabledModules ? [ ],
 }:
 
 let
@@ -17,15 +16,29 @@ let
     else if builtins.isFunction e then e
     else throw "[nixy] 'exclude' must be a function";
 
+  classifyEntry =
+    dir: name: kind:
+    if kind == "directory" then "directory"
+    else if kind == "regular" then
+      if lib.hasSuffix ".nix" name then "nix" else null
+    else if kind == "symlink" then
+      let target = dir + "/${name}"; in
+      if builtins.pathExists (target + "/.") then "directory"
+      else if lib.hasSuffix ".nix" name && builtins.pathExists target then "nix"
+      else null
+    else null;
+
   mkScanDir =
     excludeFn: dir:
     lib.concatMap (
       { name, value }:
-      let path = lib.path.append dir name; in
-      if excludeFn { inherit name path; } then [ ]
-      else if value == "directory" then mkScanDir excludeFn path
-      else if value == "regular" && lib.hasSuffix ".nix" name then [ path ]
-      else [ ]
+      let
+        path = lib.path.append dir name;
+        cls  = classifyEntry dir name value;
+      in
+      if cls == null || excludeFn { inherit name path; } then [ ]
+      else if cls == "directory" then mkScanDir excludeFn path
+      else [ path ]
     ) (lib.attrsToList (builtins.readDir dir));
 
   mkResolveImport =
@@ -86,29 +99,32 @@ let
     check = builtins.isAttrs;
     merge =
       loc: defs:
+      let
+        keys = lib.concatMap (d: builtins.attrNames d.value) defs;
+      in
       lib.warn
-        "[nixy] node schema key '${lib.showOption loc}' is not declared in global schema"
+        "[nixy] undeclared schema keys: ${lib.concatStringsSep ", " keys} (at '${lib.showOption loc}')"
         (lib.foldl' lib.recursiveUpdate { } (map (d: d.value) defs));
   };
 
   buildNode =
-    name: node: traits:
+    name: node: globalTraits:
     let
-      missing = builtins.filter (t: !traits ? ${t}) node.traits;
+      traitNames = lib.lists.unique node.traits;
+      missing = builtins.filter (t: !globalTraits ? ${t}) traitNames;
     in
     lib.throwIf (missing != [ ]) "[nixy] node '${name}': unknown traits — ${toString missing}" {
-      inherit (node) schema traits;
+      inherit (node) schema;
+      traits = traitNames;
       module = {
         _file = "<nixy/node:${name}>";
         imports =
           map (
             tName:
-            builtins.addErrorContext "loading trait '${tName}'" {
-              _file = "trait:${tName}@${name}";
-              key = "nixy/trait:${tName}";
-              imports = [ traits.${tName} ];
-            }
-          ) node.traits
+            builtins.addErrorContext "loading trait '${tName}'" (
+              loadModule "trait:${tName}@${name}" globalTraits.${tName}
+            )
+          ) traitNames
           ++ lib.imap0 (
             i: m:
             builtins.addErrorContext "loading include[${toString i}]" (
@@ -162,26 +178,8 @@ let
       };
     };
 
-  mkDisableModule =
-    disabled:
-    lib.optional (disabled != [ ]) {
-      _file = "<nixy/disabledModules>";
-      disabledModules = disabled;
-    };
-
-  mkEval =
-    resolveImport: importList: specialArgs: disabled:
-    lib.evalModules {
-      class = "nixy";
-      modules =
-        map (loadModule "<inline>") (lib.concatMap resolveImport (lib.toList importList))
-        ++ [ mkCore ]
-        ++ mkDisableModule disabled;
-      inherit specialArgs;
-    };
-
   buildResult =
-    ev: currentArgs: currentExcludeFn: currentDisabled:
+    ev: currentArgs: currentExcludeFn:
     {
       nodes   = ev.config.nodes;
       output  = ev.config.output;
@@ -195,22 +193,28 @@ let
           extraArgs    = extra.args or { };
           newArgs      = lib.recursiveUpdate currentArgs extraArgs;
           newExcludeFn = if extra ? exclude then mkExcludeFn extra.exclude else currentExcludeFn;
-          newDisabled  = currentDisabled ++ (extra.disabledModules or [ ]);
           newResolve   = mkResolveImport newExcludeFn;
           newModules   = lib.concatMap newResolve (lib.toList (extra.imports or [ ]));
         in
         buildResult
           (ev.extendModules {
-            modules = newModules ++ mkDisableModule (extra.disabledModules or [ ]);
+            modules = newModules;
             specialArgs = extraArgs;
           })
           newArgs
-          newExcludeFn
-          newDisabled;
+          newExcludeFn;
     };
 
   excludeFn     = mkExcludeFn exclude;
   resolveImport = mkResolveImport excludeFn;
 
+  ev = lib.evalModules {
+    class = "nixy";
+    modules =
+      map (loadModule "<inline>") (lib.concatMap resolveImport (lib.toList imports))
+      ++ [ mkCore ];
+    specialArgs = args;
+  };
+
 in
-buildResult (mkEval resolveImport imports args disabledModules) args excludeFn disabledModules
+buildResult ev args excludeFn

@@ -133,6 +133,7 @@ in {
 `nixy.eval` scans `imports` recursively:
 
 - **Directories** — scanned for `.nix` files recursively
+- **Symlinks** — followed transparently (symlinked directories are scanned, symlinked `.nix` files are loaded)
 - **Files** (`.nix`) — loaded directly
 - **Functions** and **attrsets** — passed through as inline modules
 - **Lists** — flattened
