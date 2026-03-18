@@ -2,7 +2,7 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "nixy",
-  description: "Module builder for Nix",
+  description: "Structured configuration for Nix fleets",
   base: "/nixy/",
   themeConfig: {
     nav: [

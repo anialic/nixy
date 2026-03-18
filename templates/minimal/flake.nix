@@ -8,11 +8,12 @@
     { nixpkgs, nixy, ... }@inputs:
     let
       cluster = nixy.eval {
-        inherit (nixpkgs) lib;
         imports = [ ./. ];
         args = { inherit inputs; };
       };
-      mkSystem =
+    in
+    {
+      nixosConfigurations = builtins.mapAttrs (
         name: node:
         nixpkgs.lib.nixosSystem {
           system = node.schema.base.system;
@@ -21,9 +22,7 @@
             inherit name;
             inherit (node) schema;
           };
-        };
-    in
-    {
-      nixosConfigurations = nixpkgs.lib.mapAttrs mkSystem cluster.nodes;
+        }
+      ) cluster.nodes;
     };
 }

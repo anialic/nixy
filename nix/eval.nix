@@ -1,14 +1,25 @@
 {
-  lib,
   imports ? [ ],
   args ? { },
   exclude ? null,
 }:
 
 let
+
+  isNix =
+    s:
+    let l = builtins.stringLength s; in
+    l >= 4 && builtins.substring (l - 4) 4 s == ".nix";
+
+  toList = x: if builtins.isList x then x else [ x ];
+
   defaultExclude =
     { name, ... }:
-    lib.hasPrefix "_" name || lib.hasPrefix "." name || name == "flake.nix" || name == "default.nix";
+    let c = builtins.substring 0 1 name; in
+    c == "_"
+    || c == "."
+    || name == "flake.nix"
+    || name == "default.nix";
 
   mkExcludeFn =
     e:
@@ -17,204 +28,175 @@ let
     else throw "[nixy] 'exclude' must be a function";
 
   classifyEntry =
-    dir: name: kind:
-    if kind == "directory" then "directory"
-    else if kind == "regular" then
-      if lib.hasSuffix ".nix" name then "nix" else null
-    else if kind == "symlink" then
-      let target = dir + "/${name}"; in
-      if builtins.pathExists (target + "/.") then "directory"
-      else if lib.hasSuffix ".nix" name && builtins.pathExists target then "nix"
+    path: name: kind:
+    let
+      k = if kind == "unknown" then builtins.readFileType path else kind;
+    in
+    if k == "regular" then
+      if isNix name then "nix" else null
+    else if k == "directory" then "directory"
+    else if k == "symlink" then
+      if builtins.pathExists (path + "/.") then "directory"
+      else if isNix name && builtins.pathExists path then "nix"
       else null
     else null;
 
-  mkScanDir =
-    excludeFn: dir:
-    lib.concatMap (
-      { name, value }:
+  scanDir =
+    exFn: dir:
+    let entries = builtins.readDir dir; in
+    builtins.concatMap (
+      name:
       let
-        path = lib.path.append dir name;
-        cls  = classifyEntry dir name value;
+        kind = entries.${name};
+        path = dir + "/${name}";
+        cls = classifyEntry path name kind;
       in
-      if cls == null || excludeFn { inherit name path; } then [ ]
-      else if cls == "directory" then mkScanDir excludeFn path
+      if cls == null || exFn { inherit name path; } then [ ]
+      else if cls == "directory" then scanDir exFn path
       else [ path ]
-    ) (lib.attrsToList (builtins.readDir dir));
+    ) (builtins.attrNames entries);
 
-  mkResolveImport =
-    excludeFn:
+  resolveImports =
+    exFn:
     let
-      scanDir = mkScanDir excludeFn;
-      resolveImport =
+      go =
         x:
-        if builtins.isList x then lib.concatMap resolveImport x
+        if builtins.isList x then builtins.concatMap go x
         else if builtins.isPath x then
-          let s = toString x; in
-          if lib.hasSuffix ".nix" s then
-            if builtins.pathExists x then [ x ]
-            else throw "[nixy] file not found: ${s}"
-          else if builtins.pathExists x then scanDir x
-          else throw "[nixy] path not found: ${s}"
+          let
+            s = toString x;
+            t = builtins.addErrorContext "[nixy] while resolving '${s}'" (builtins.readFileType x);
+            isDir = t == "directory"
+              || (t == "symlink" && builtins.pathExists (x + "/."));
+          in
+          if isDir then scanDir exFn x
+          else if isNix s then [ x ]
+          else throw "[nixy] not a .nix file or directory: ${s}"
         else if builtins.isFunction x || builtins.isAttrs x then [ x ]
         else throw "[nixy] unsupported import type: ${builtins.typeOf x}";
     in
-    resolveImport;
+    go;
 
-  loadModule =
-    label: m:
+  loadMod =
+    modArgs: m:
     let
-      loc = if builtins.isPath m then toString m else label;
-      val = if builtins.isPath m then import m else m;
+      isP = builtins.isPath m;
+      loc = if isP then toString m else "<inline>";
+      raw = if isP then import m else m;
+      val = builtins.addErrorContext "[nixy] while loading '${loc}'" (
+        if builtins.isFunction raw then raw modArgs else raw
+      );
     in
-    if builtins.isFunction val || builtins.isAttrs val then
-      lib.setDefaultModuleLocation loc val
-    else
-      throw "[nixy] ${loc}: expected function or attrset, got ${builtins.typeOf val}";
+    if builtins.isAttrs val then val
+    else throw "[nixy] '${loc}': expected attrset, got ${builtins.typeOf val}";
 
-  isOption = x: builtins.isAttrs x && (x._type or null) == "option";
+  mergeSchema =
+    path: a: b:
+    b // builtins.mapAttrs (
+      name: va:
+      if b ? ${name} then
+        let
+          vb = b.${name};
+          p = if path == "" then name else "${path}.${name}";
+        in
+        if builtins.isAttrs va && builtins.isAttrs vb then mergeSchema p va vb
+        else if builtins.isAttrs va || builtins.isAttrs vb then
+          throw "[nixy] schema '${p}': conflict between subtree and leaf"
+        else throw "[nixy] schema '${p}': declared twice"
+      else va
+    ) a;
 
-  toOptions =
-    path: attrs:
-    lib.mapAttrs (
-      name: value:
-      let p = path ++ [ name ]; in
-      if isOption value then value
-      else if builtins.isAttrs value then
-        lib.mkOption {
-          type = lib.types.submodule { options = toOptions p value; };
-          default = { };
-        }
-      else
-        throw "[nixy] schema '${lib.concatStringsSep "." p}': expected option or attrset, got ${builtins.typeOf value}"
-    ) attrs;
+  mergeValues =
+    a: b:
+    b // builtins.mapAttrs (
+      name: va:
+      if b ? ${name} then
+        if builtins.isAttrs va && builtins.isAttrs b.${name} then mergeValues va b.${name}
+        else b.${name}
+      else va
+    ) a;
 
-  deepMerge = lib.types.mkOptionType {
-    name = "deepMerge";
-    check = builtins.isAttrs;
-    merge = _: defs: lib.foldl' lib.recursiveUpdate { } (map (d: d.value) defs);
-  };
+  emptySt = { schema = { }; traits = { }; rawNodes = { }; };
 
-  warnDeepMerge = lib.types.mkOptionType {
-    name = "warnDeepMerge";
-    check = builtins.isAttrs;
-    merge =
-      loc: defs:
-      let
-        keys = lib.concatMap (d: builtins.attrNames d.value) defs;
-      in
-      lib.warn
-        "[nixy] undeclared schema keys: ${lib.concatStringsSep ", " keys} (at '${lib.showOption loc}')"
-        (lib.foldl' lib.recursiveUpdate { } (map (d: d.value) defs));
-  };
+  mergeMod =
+    st: mod:
+    let
+      newTraits = mod.traits or { };
+      newNodes = mod.nodes or { };
+      dups = builtins.intersectAttrs st.rawNodes newNodes;
+    in
+    {
+      schema = mergeSchema "" st.schema (mod.schema or { });
+      traits = st.traits // builtins.mapAttrs (
+        name: v:
+        if st.traits ? ${name} then st.traits.${name} ++ [ v ] else [ v ]
+      ) newTraits;
+      rawNodes =
+        if dups != { } then
+          throw "[nixy] duplicate node '${builtins.head (builtins.attrNames dups)}'"
+        else st.rawNodes // newNodes;
+    };
 
   buildNode =
-    name: node: globalTraits:
+    globalSchema: globalTraits: name: node:
     let
-      traitNames = lib.lists.unique node.traits;
-      missing = builtins.filter (t: !globalTraits ? ${t}) traitNames;
+      traitNames = node.traits or [ ];
+      includes = node.includes or [ ];
+      resolvedTraits =
+        if traitNames == [ ] then [ ]
+        else builtins.concatMap (
+          t:
+          if globalTraits ? ${t} then globalTraits.${t}
+          else throw "[nixy] node '${name}': unknown trait '${t}'"
+        ) traitNames;
     in
-    lib.throwIf (missing != [ ]) "[nixy] node '${name}': unknown traits — ${toString missing}" {
-      inherit (node) schema;
+    {
+      schema = if node ? schema then mergeValues globalSchema node.schema else globalSchema;
       traits = traitNames;
       module = {
-        _file = "<nixy/node:${name}>";
+        _file = "<nixy:${name}>";
         imports =
-          map (
-            tName:
-            builtins.addErrorContext "loading trait '${tName}'" (
-              loadModule "trait:${tName}@${name}" globalTraits.${tName}
-            )
-          ) traitNames
-          ++ lib.imap0 (
-            i: m:
-            builtins.addErrorContext "loading include[${toString i}]" (
-              loadModule "include:${toString i}@${name}" m
-            )
-          ) node.includes;
+          if traitNames == [ ] then includes
+          else if includes == [ ] then resolvedTraits
+          else resolvedTraits ++ includes;
       };
     };
 
-  mkCore =
-    { config, ... }:
+  evalWith =
+    modArgs: exFn: resolved: st:
+    let
+      nodes = builtins.mapAttrs (
+        name: node:
+        builtins.addErrorContext "[nixy] while building node '${name}'" (
+          buildNode st.schema st.traits name node
+        )
+      ) st.rawNodes;
+    in
     {
-      _file = "<nixy/core>";
-      options = {
-        schema = lib.mkOption { type = deepMerge; default = { }; };
-        traits = lib.mkOption {
-          type = lib.types.attrsWith {
-            elemType = lib.types.deferredModule;
-            placeholder = "traitName";
-          };
-          default = { };
-        };
-        nodes = lib.mkOption {
-          type = lib.types.attrsWith {
-            elemType = lib.types.submodule {
-              options = {
-                traits = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
-                schema = lib.mkOption {
-                  type = lib.types.submodule {
-                    freeformType = warnDeepMerge;
-                    options = toOptions [ ] config.schema;
-                  };
-                  default = { };
-                };
-                includes = lib.mkOption { type = lib.types.listOf lib.types.raw; default = [ ]; };
-              };
-            };
-            lazy = true;
-            placeholder = "nodeName";
-          };
-          default = { };
-          apply = nodes:
-            lib.mapAttrs (
-              name: node:
-              builtins.addErrorContext "building node '${name}'" (
-                buildNode name node config.traits
-              )
-            ) nodes;
-        };
-        output = lib.mkOption { type = deepMerge; default = { }; };
-      };
-    };
-
-  buildResult =
-    ev: currentArgs: currentExcludeFn:
-    {
-      nodes   = ev.config.nodes;
-      output  = ev.config.output;
-      schema  = ev.config.schema;
-      traits  = ev.config.traits;
-      options = ev.options;
+      inherit (st) schema traits;
+      inherit nodes;
 
       extend =
         extra:
         let
-          extraArgs    = extra.args or { };
-          newArgs      = lib.recursiveUpdate currentArgs extraArgs;
-          newExcludeFn = if extra ? exclude then mkExcludeFn extra.exclude else currentExcludeFn;
-          newResolve   = mkResolveImport newExcludeFn;
-          newModules   = lib.concatMap newResolve (lib.toList (extra.imports or [ ]));
+          newExFn = if extra ? exclude then mkExcludeFn extra.exclude else exFn;
+          er = builtins.concatMap (resolveImports newExFn) (toList (extra.imports or [ ]));
+          ar = resolved ++ er;
         in
-        buildResult
-          (ev.extendModules {
-            modules = newModules;
-            specialArgs = extraArgs;
-          })
-          newArgs
-          newExcludeFn;
+        if extra ? args then
+          init (modArgs // extra.args) newExFn ar
+        else
+          evalWith modArgs newExFn ar
+            (builtins.foldl' (acc: m: mergeMod acc (loadMod modArgs m)) st er);
     };
 
-  excludeFn     = mkExcludeFn exclude;
-  resolveImport = mkResolveImport excludeFn;
+  init =
+    modArgs: exFn: resolved:
+    evalWith modArgs exFn resolved
+      (builtins.foldl' (st: m: mergeMod st (loadMod modArgs m)) emptySt resolved);
 
-  ev = lib.evalModules {
-    class = "nixy";
-    modules =
-      map (loadModule "<inline>") (lib.concatMap resolveImport (lib.toList imports))
-      ++ [ mkCore ];
-    specialArgs = args;
-  };
+  exFn = mkExcludeFn exclude;
+  resolved = builtins.concatMap (resolveImports exFn) (toList imports);
 
 in
-buildResult ev args excludeFn
+init args exFn resolved

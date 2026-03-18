@@ -1,14 +1,18 @@
 name: Deploy docs
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["docs/**", "package.json"]
+
 permissions:
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,6 +26,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
+
   deploy:
     needs: build
     runs-on: ubuntu-latest

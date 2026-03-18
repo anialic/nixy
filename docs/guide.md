@@ -1,43 +1,29 @@
 # Guide
 
-nixy organizes configuration around three concepts: **schema** declares options, **traits** implement behavior, and **nodes** define targets.
-
 ## Schema
 
-Declare options with `lib.mkOption`. Multiple files can contribute to the same schema tree — they are deep-merged.
+A pure default-value tree. Non-attrset values are leaves; attrsets are subtrees.
 
 ```nix
-{ lib, ... }:
+{ ... }:
 {
   schema.ssh = {
-    port = lib.mkOption {
-      type = lib.types.port;
-      default = 22;
-    };
-    permitRoot = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-    };
+    port = 22;
+    permitRoot = false;
   };
 
   schema.base = {
-    system = lib.mkOption {
-      type = lib.types.str;
-      default = "x86_64-linux";
-    };
-    hostName = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-    };
+    system = "x86_64-linux";
+    hostName = "nixos";
   };
 }
 ```
 
+Multiple files can contribute to the same schema tree — subtrees merge, duplicate leaves error.
+
 ## Traits
 
-A trait is a named behavior unit. The key is the trait name, the value is a module.
-
-Arguments available inside traits depend on what you pass via `specialArgs` in the target builder — nixy itself does not inject anything:
+A trait is a named module. The value can be a function, an attrset, or a path.
 
 ```nix
 traits.ssh = { schema, config, pkgs, ... }: {
@@ -48,6 +34,8 @@ traits.ssh = { schema, config, pkgs, ... }: {
   };
 };
 ```
+
+Same-name traits from different files are merged — both definitions are included when activated.
 
 ## Nodes
 
@@ -66,26 +54,25 @@ Each node has three fields:
 }
 ```
 
-**traits** — Trait names to activate. Unknown names are an error.
+**traits** — trait names to activate. Unknown names error.
 
-**schema** — Type-checked values matching global schema declarations. Unset values use defaults. Schema values are exposed in the result alongside the module.
+**schema** — overrides merged with global defaults: both attrsets → recurse, otherwise node value wins. Nodes can add keys not in the global schema.
 
-**includes** — Extra modules appended after trait modules.
+**includes** — extra NixOS modules appended after trait modules.
 
-## Wiring Nodes
+## Wiring
 
-Each node in the result carries `schema`, `traits`, and `module`:
+Each node result carries `schema`, `traits`, and `module`:
 
 ```nix
 let
   cluster = nixy.eval {
-    inherit (nixpkgs) lib;
     imports = [ ./. ];
     args = { inherit inputs; };
   };
 in {
-  nixosConfigurations = lib.mapAttrs (name: node:
-    lib.nixosSystem {
+  nixosConfigurations = builtins.mapAttrs (name: node:
+    nixpkgs.lib.nixosSystem {
       system = node.schema.base.system;
       modules = [ node.module ];
       specialArgs = { inherit name; inherit (node) schema; };
@@ -94,72 +81,49 @@ in {
 }
 ```
 
-This keeps nixy out of the target module system's namespace. You control exactly what names are available inside traits.
+You control what names are available inside traits via `specialArgs`.
 
 ## Multi-platform
 
-Route nodes to different builders by filtering on schema values:
+Filter nodes by schema values:
 
 ```nix
 let
   cluster = nixy.eval {
-    inherit (nixpkgs) lib;
     imports = [ ./. ];
     args = { inherit inputs; };
   };
-  byTarget = t: lib.filterAttrs (_: n: (n.schema.base.target or "nixos") == t) cluster.nodes;
-  mkArgs = name: node: { inherit name; inherit (node) schema; inherit inputs; };
+  byTarget = t: builtins.removeAttrs cluster.nodes
+    (builtins.filter (n: (cluster.nodes.${n}.schema.base.target or "nixos") != t)
+      (builtins.attrNames cluster.nodes));
 in {
-  nixosConfigurations = lib.mapAttrs (name: node:
-    lib.nixosSystem {
+  nixosConfigurations = builtins.mapAttrs (name: node:
+    nixpkgs.lib.nixosSystem {
       system = node.schema.base.system;
       modules = [ node.module ];
-      specialArgs = mkArgs name node;
+      specialArgs = { inherit name; inherit (node) schema; };
     }
   ) (byTarget "nixos");
-
-  darwinConfigurations = lib.mapAttrs (name: node:
-    inputs.darwin.lib.darwinSystem {
-      system = node.schema.base.system;
-      modules = [ node.module ];
-      specialArgs = mkArgs name node;
-    }
-  ) (byTarget "darwin");
 }
 ```
 
-## Imports and Scanning
+## Scanning
 
-`nixy.eval` scans `imports` recursively:
+`nixy.eval` resolves `imports` recursively:
 
 - **Directories** — scanned for `.nix` files recursively
-- **Symlinks** — followed transparently (symlinked directories are scanned, symlinked `.nix` files are loaded)
+- **Symlinks** — followed (directories scanned, `.nix` files loaded)
 - **Files** (`.nix`) — loaded directly
-- **Functions** and **attrsets** — passed through as inline modules
+- **Functions / attrsets** — passed through as inline modules
 - **Lists** — flattened
 
-By default, files starting with `_` or `.`, plus `flake.nix` and `default.nix`, are excluded. Override with `exclude`:
+Excluded by default: names starting with `_` or `.`, `flake.nix`, `default.nix`.
+
+Override with `exclude`:
 
 ```nix
 nixy.eval {
-  inherit (nixpkgs) lib;
   imports = [ ./. ];
   exclude = { name, ... }: name == "test.nix";
 }
 ```
-
-## Cross-node References
-
-Traits can read other nodes' data via `output` passed through `specialArgs`:
-
-```nix
-traits.client = { output, ... }: {
-  services.myApp.serverHost = output.meta.server.schema.net.ip;
-};
-```
-
-See [Advanced](advanced.md) for the `output` pattern.
-
-## Error Tracking
-
-nixy tags each trait and include module with location information. When evaluation fails, the trace includes the source (trait name or include index) and node name.

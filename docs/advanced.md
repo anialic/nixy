@@ -1,124 +1,27 @@
 # Advanced
 
-## Schema Helpers
+## Cross-node References
 
-For large configurations, `lib.mkOption` verbosity adds up. Define helpers outside the scanned directory (or exclude them):
-
-```nix
-# helpers.nix
-{ lib }:
-let
-  mkOpt = type: default:
-    lib.mkOption { type = lib.types.nullOr type; inherit default; };
-  mkReq = type: lib.mkOption { inherit type; };
-in
-{
-  inherit mkOpt mkReq;
-  mkStr     = mkOpt lib.types.str;
-  mkBool    = mkOpt lib.types.bool;
-  mkInt     = mkOpt lib.types.int;
-  mkPort    = mkOpt lib.types.port;
-  mkPath    = mkOpt lib.types.path;
-  mkLines   = mkOpt lib.types.lines;
-  mkPackage = mkOpt lib.types.package;
-  mkRaw     = mkOpt lib.types.raw;
-  mkEnum    = values: mkOpt (lib.types.enum values);
-  mkList    = elem:   mkOpt (lib.types.listOf elem);
-  mkAttrsOf = val:    mkOpt (lib.types.attrsOf val);
-  mkEither  = a: b:   mkOpt (lib.types.either a b);
-  mkOneOf   = ts:     mkOpt (lib.types.oneOf ts);
-  mkSub = opts: lib.mkOption {
-    type = lib.types.submodule { options = opts; };
-    default = { };
-  };
-  mkSubList = opts: lib.mkOption {
-    type = lib.types.listOf (lib.types.submodule { options = opts; });
-    default = [ ];
-  };
-}
-```
-
-Pass them via `args`:
+Build cross-node data outside nixy, pass it via `specialArgs`:
 
 ```nix
-# flake.nix
 let
-  helpers = import ./helpers.nix { inherit (nixpkgs) lib; };
   cluster = nixy.eval {
-    inherit (nixpkgs) lib;
     imports = [ ./. ];
-    args = { inherit inputs; } // helpers;
+    args = { inherit inputs; };
   };
-```
-
-Then use directly in nixy-level files:
-
-```nix
-{ mkStr, mkBool, mkPort, mkEnum, mkReq, mkSubList, lib, ... }:
-{
-  schema.base = {
-    system   = mkStr "x86_64-linux";
-    hostName = mkStr null;
-    user     = mkStr null;
-    timeZone = mkStr "UTC";
-    target   = mkEnum [ "nixos" "iso" "darwin" ] "nixos";
-  };
-
-  schema.ssh = {
-    port           = mkPort 22;
-    permitRoot     = mkBool false;
-    authorizedKeys = mkList lib.types.str null;
-  };
-
-  schema.net = {
-    ip      = mkStr null;
-    gateway = mkStr null;
-    dns     = mkList lib.types.str null;
-    iface   = mkStr null;
-  };
-
-  schema.users = mkSubList {
-    name   = mkReq lib.types.str;
-    groups = mkList lib.types.str [ ];
-    shell  = mkStr null;
-    keys   = mkList lib.types.str [ ];
-  };
-}
-```
-
----
-
-## Custom Output
-
-`output` is a deep-merged attrset available to any nixy-level module. Use it for cluster-level data shared across traits or exposed to external tools.
-
-### Cross-node references
-
-Build a metadata view that traits consume:
-
-```nix
-# meta.nix
-{ config, lib, ... }:
-{
-  output.meta = lib.mapAttrs (_: n: {
+  meta = builtins.mapAttrs (_: n: {
     inherit (n) schema traits;
-  }) config.nodes;
+  }) cluster.nodes;
+in {
+  nixosConfigurations = builtins.mapAttrs (name: node:
+    nixpkgs.lib.nixosSystem {
+      system = node.schema.base.system;
+      modules = [ node.module ];
+      specialArgs = { inherit name meta; inherit (node) schema; };
+    }
+  ) cluster.nodes;
 }
-```
-
-Wire it into `specialArgs`:
-
-```nix
-mkSystem = name: node:
-  lib.nixosSystem {
-    system = node.schema.base.system;
-    modules = [ node.module ];
-    specialArgs = {
-      inherit name;
-      inherit (node) schema;
-      meta = cluster.output.meta;
-    };
-  };
 ```
 
 Traits can then reference other nodes:
@@ -133,53 +36,25 @@ traits.wireguard-peer = { schema, meta, ... }: {
 };
 ```
 
-### Deployment inventory
+## Deployment Inventory
 
-`output` values are plain Nix — serialize them for use outside NixOS:
+Serialize node data for external tools:
 
 ```nix
-{ config, lib, ... }:
-{
-  output.inventory = lib.mapAttrs (_: n: {
+packages.x86_64-linux.inventory = let
+  pkgs = nixpkgs.legacyPackages.x86_64-linux;
+  inv = builtins.mapAttrs (_: n: {
     ip     = n.schema.net.ip;
     user   = n.schema.base.user;
     system = n.schema.base.system;
     tags   = n.traits;
-  }) config.nodes;
-}
+  }) cluster.nodes;
+in pkgs.writeText "inventory.json" (builtins.toJSON inv);
 ```
-
-```nix
-packages.inventory = pkgs.writeText "inventory.json"
-  (builtins.toJSON cluster.output.inventory);
-```
-
-### Multi-target routing
-
-```nix
-let
-  byTarget = t:
-    lib.filterAttrs (_: n: (n.schema.base.target or "nixos") == t) cluster.nodes;
-
-  mkNixos = nodes:
-    lib.mapAttrs (name: n:
-      lib.nixosSystem {
-        system = n.schema.base.system;
-        modules = [ n.module ];
-        specialArgs = { inherit name inputs; inherit (n) schema; meta = cluster.output.meta; };
-      }
-    ) nodes;
-in
-{
-  nixosConfigurations = mkNixos (byTarget "nixos");
-}
-```
-
----
 
 ## Composition with extend
 
-`extend` adds imports incrementally using `extendModules`. `lib` is inherited; new `args` are deep-merged with `lib.recursiveUpdate`.
+`extend` layers additional imports on top. `args` are shallow-merged (`//`).
 
 ### Library + consumer
 
@@ -187,7 +62,6 @@ in
 # shared library flake
 outputs = { self }: {
   base = import ./nix/eval.nix {
-    inherit lib;
     imports = [ ./base ];
   };
 };
@@ -205,14 +79,14 @@ let
 ### Layered environments
 
 ```nix
-base = nixy.eval { inherit lib; imports = [ ./base ]; args = { inherit inputs; }; };
+base = nixy.eval { imports = [ ./base ]; args = { inherit inputs; }; };
 prod = base.extend { imports = [ ./prod ]; args = { env = "prod"; }; };
 dev  = base.extend { imports = [ ./dev  ]; args = { env = "dev";  }; };
 ```
 
 ### Overriding exclude
 
-Reset to default:
+A new `exclude` in `extend` applies only to the new imports — previously resolved paths are not re-scanned. Passing `args` triggers a full re-evaluation of all modules but still uses the already-resolved file list.
 
 ```nix
 cluster.extend {
@@ -221,11 +95,62 @@ cluster.extend {
 }
 ```
 
-Replace entirely:
-
 ```nix
 cluster.extend {
   imports = [ ./extra ];
-  exclude = { name, ... }: lib.hasSuffix ".test.nix" name;
+  exclude = { name, ... }: name == "test.nix";
+}
+```
+
+## Trait Composition
+
+Same-name traits from different files are merged — both included when activated:
+
+```nix
+# library: base-ssh.nix
+{
+  traits.ssh = { schema, ... }: {
+    services.openssh.enable = true;
+    services.openssh.ports = [ schema.ssh.port ];
+  };
+}
+```
+
+```nix
+# consumer: hardened-ssh.nix
+{
+  traits.ssh = {
+    services.openssh.settings = {
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+    };
+  };
+}
+```
+
+## Trait Groups
+
+Use plain Nix:
+
+```nix
+# groups.nix
+{
+  webServer = [ "base" "systemd-boot" "ssh" "nginx" "certbot" ];
+  dbServer  = [ "base" "systemd-boot" "ssh" "postgresql" ];
+}
+```
+
+```nix
+# nodes.nix
+let groups = import ./groups.nix; in
+{
+  nodes.web-1 = {
+    traits = groups.webServer;
+    schema.base.hostName = "web-1";
+  };
+  nodes.db-1 = {
+    traits = groups.dbServer;
+    schema.base.hostName = "db-1";
+  };
 }
 ```

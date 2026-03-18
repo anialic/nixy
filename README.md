@@ -1,14 +1,14 @@
 # Nixy
 
-**nixy** is a module builder that helps structure large Nix configurations.
+Structured configuration for Nix fleets.
 
-It models configuration around three concepts:
+Three concepts:
 
-* **Schema** — Typed options with defaults, deep-merged across files.
-* **Traits** — Named behavior units that turn schema values into configuration.
-* **Nodes** — Targets that select traits, override schema values, and produce modules.
+- **Schema** — default-value tree shared across the configuration
+- **Traits** — named modules that read schema values and produce configuration
+- **Nodes** — targets that select traits, override schema, and yield ready-to-use modules
 
-The result is standard Nix modules, fully compatible with `lib.evalModules` and `lib.nixosSystem`.
+Output is standard NixOS modules, compatible with `nixosSystem`.
 
 ## Quick Start
 
@@ -20,12 +20,14 @@ nix flake init -t github:cuskiy/nixy#minimal
 
 ```nix
 # base.nix
-{ lib, ... }:
+{ ... }:
 {
-  schema.ssh.port = lib.mkOption {
-    type = lib.types.port;
-    default = 22;
+  schema.base = {
+    system = "x86_64-linux";
+    hostName = "nixos";
   };
+
+  schema.ssh.port = 22;
 
   traits.ssh = { schema, ... }: {
     services.openssh.enable = true;
@@ -35,10 +37,11 @@ nix flake init -t github:cuskiy/nixy#minimal
 ```
 
 ```nix
-# nodes.nix
+# server.nix
 {
   nodes.server = {
     traits = [ "ssh" ];
+    schema.base.hostName = "server";
     schema.ssh.port = 2222;
   };
 }
@@ -55,12 +58,11 @@ nix flake init -t github:cuskiy/nixy#minimal
   outputs = { nixpkgs, nixy, ... }@inputs:
     let
       cluster = nixy.eval {
-        inherit (nixpkgs) lib;
         imports = [ ./. ];
         args = { inherit inputs; };
       };
     in {
-      nixosConfigurations = nixpkgs.lib.mapAttrs (name: node:
+      nixosConfigurations = builtins.mapAttrs (name: node:
         nixpkgs.lib.nixosSystem {
           system = node.schema.base.system;
           modules = [ node.module ];

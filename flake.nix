@@ -1,5 +1,5 @@
 {
-  description = "Module builder for Nix";
+  description = "Structured configuration for Nix fleets";
 
   outputs =
     { self }:

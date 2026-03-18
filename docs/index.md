@@ -1,7 +1,7 @@
 ---
 layout: home
 hero:
-  text: Module builder for Nix
+  text: Structured configuration for Nix fleets
   tagline: Compose modules with schema, traits, and nodes
   actions:
     - theme: brand
@@ -12,9 +12,9 @@ hero:
       link: /guide
 features:
   - title: Schema
-    details: Typed options with defaults. Multiple files deep-merge into one tree.
+    details: A pure default-value tree. Multiple files merge into one.
   - title: Traits
-    details: Named behavior units that turn schema values into real configuration.
+    details: Named modules that turn schema values into real NixOS configuration.
   - title: Nodes
     details: Pick traits, override schema values, get a ready-to-use module.
 ---

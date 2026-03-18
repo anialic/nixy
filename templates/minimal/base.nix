@@ -1,30 +1,18 @@
-{ lib, ... }:
+{ ... }:
 {
   schema.base = {
-    system = lib.mkOption {
-      type = lib.types.str;
-      default = "x86_64-linux";
-    };
-    hostName = lib.mkOption {
-      type = lib.types.str;
-      default = "nixos";
-    };
-    user = lib.mkOption {
-      type = lib.types.str;
-      default = "alice";
-    };
-    timeZone = lib.mkOption {
-      type = lib.types.str;
-      default = "UTC";
-    };
+    system = "x86_64-linux";
+    hostName = "nixos";
+    user = "alice";
+    timeZone = "UTC";
+    domain = null;
   };
 
   traits.base =
-    { schema, pkgs, ... }:
+    { schema, pkgs, lib, ... }:
     {
-      boot.loader.systemd-boot.enable = true;
-      boot.loader.efi.canTouchEfiVariables = true;
       networking.hostName = schema.base.hostName;
+      networking.domain = lib.mkIf (schema.base.domain != null) schema.base.domain;
       time.timeZone = schema.base.timeZone;
       users.users.${schema.base.user} = {
         isNormalUser = true;
@@ -34,4 +22,9 @@
       system.stateVersion = "26.05";
       nix.settings.experimental-features = [ "nix-command" "flakes" ];
     };
+
+  traits.systemd-boot = {
+    boot.loader.systemd-boot.enable = true;
+    boot.loader.efi.canTouchEfiVariables = true;
+  };
 }

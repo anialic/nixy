@@ -6,11 +6,13 @@
 nix flake init -t github:cuskiy/nixy#minimal
 ```
 
-This creates three files:
+Creates five files:
 
 - `flake.nix` — wires nixy into `nixosConfigurations`
-- `base.nix` — schema options and a `base` trait
-- `my-nixos.nix` — a node using the `base` trait
+- `base.nix` — schema defaults and traits
+- `ssh.nix` — ssh schema and trait
+- `my-nixos.nix` — a node definition
+- `server.nix` — a second node with overrides
 
 ## Build
 
@@ -20,20 +22,21 @@ nix build .#nixosConfigurations.my-nixos.config.system.build.toplevel
 
 ## How It Works
 
-`nixy.eval` scans your directory for `.nix` files, collects all `schema`, `traits`, and `nodes` definitions, then produces one module per node.
+`nixy.eval` scans your directory for `.nix` files, collects `schema`, `traits`, and `nodes`, then produces one module per node.
 
 ```
 your-config/
 ├── flake.nix
 ├── base.nix           # schema + traits
-├── ssh.nix            # schema + traits
-└── my-nixos.nix       # node
+├── ssh.nix            # schema + trait
+├── my-nixos.nix       # node
+└── server.nix         # node with overrides
 ```
 
-Each node result carries `schema`, `traits`, and `module`. You pass what you need into the target builder:
+Each node carries `schema`, `traits`, and `module`:
 
 ```nix
-nixpkgs.lib.mapAttrs (name: node:
+builtins.mapAttrs (name: node:
   nixpkgs.lib.nixosSystem {
     system = node.schema.base.system;
     modules = [ node.module ];
@@ -42,8 +45,8 @@ nixpkgs.lib.mapAttrs (name: node:
 ) cluster.nodes
 ```
 
-## Next Steps
+## Next
 
 - [Guide](guide.md) — schema, traits, nodes in detail
-- [API](api.md) — `nixy.eval` parameters and return shape
-- [Advanced](advanced.md) — output, helpers, composition
+- [API](api.md) — parameters and return shape
+- [Advanced](advanced.md) — composition and extend
